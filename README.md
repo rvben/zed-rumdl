@@ -8,7 +8,7 @@
 - Format on save and on-demand formatting
 - Automatic binary management (downloads rumdl automatically)
 - Respects project configuration (`.rumdl.toml`, `pyproject.toml`)
-- Support for custom binary path via LSP settings
+- Configurable via Zed's LSP settings
 
 ## Installation
 
@@ -46,6 +46,22 @@ If you want to use a specific rumdl binary instead of the auto-downloaded one:
     "rumdl": {
       "binary": {
         "path": "/path/to/rumdl"
+      }
+    }
+  }
+}
+```
+
+### LSP Settings
+
+You can pass configuration to rumdl via Zed's LSP settings:
+
+```json
+{
+  "lsp": {
+    "rumdl": {
+      "settings": {
+        "line-length": 120
       }
     }
   }
