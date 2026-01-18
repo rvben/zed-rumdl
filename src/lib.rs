@@ -1,5 +1,6 @@
 use std::fs;
-use zed_extension_api::{self as zed, LanguageServerId, Result};
+
+use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
 
 struct RumdlExtension {
     cached_binary_path: Option<String>,
@@ -13,8 +14,20 @@ impl RumdlExtension {
     ) -> Result<String> {
         // Check if we have a cached path that still exists
         if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).map_or(false, |m| m.is_file()) {
+            if fs::metadata(path).is_ok_and(|stat| stat.is_file()) {
                 return Ok(path.clone());
+            }
+        }
+
+        // Check LSP settings for user-configured binary path
+        let lsp_settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)?;
+
+        if let Some(binary_settings) = lsp_settings.binary {
+            if let Some(path) = binary_settings.path {
+                if !path.is_empty() {
+                    self.cached_binary_path = Some(path.clone());
+                    return Ok(path);
+                }
             }
         }
 
@@ -72,7 +85,7 @@ impl RumdlExtension {
             }
         );
 
-        if !fs::metadata(&binary_path).map_or(false, |m| m.is_file()) {
+        if !fs::metadata(&binary_path).is_ok_and(|stat| stat.is_file()) {
             zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
@@ -95,9 +108,8 @@ impl RumdlExtension {
                 fs::read_dir(".").map_err(|e| format!("failed to list working directory {e}"))?;
             for entry in entries.flatten() {
                 let entry_path = entry.path();
-                if entry_path.to_string_lossy().starts_with("rumdl-")
-                    && entry_path.to_string_lossy() != version_dir
-                {
+                let entry_name = entry_path.to_string_lossy();
+                if entry_name.starts_with("rumdl-") && entry_name != version_dir {
                     fs::remove_dir_all(&entry_path).ok();
                 }
             }
@@ -131,3 +143,18 @@ impl zed::Extension for RumdlExtension {
 }
 
 zed::register_extension!(RumdlExtension);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zed_extension_api::Extension;
+
+    #[test]
+    fn test_new_extension_initial_state() {
+        let ext = RumdlExtension::new();
+        assert!(
+            ext.cached_binary_path.is_none(),
+            "A new extension instance should have no cached binary path"
+        );
+    }
+}
