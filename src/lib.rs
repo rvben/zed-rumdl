@@ -4,6 +4,7 @@ use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Re
 
 struct RumdlExtension {
     cached_binary_path: Option<String>,
+    use_system_binary: bool,
 }
 
 impl RumdlExtension {
@@ -26,6 +27,7 @@ impl RumdlExtension {
             if let Some(path) = binary_settings.path {
                 if !path.is_empty() {
                     self.cached_binary_path = Some(path.clone());
+                    self.use_system_binary = true;
                     return Ok(path);
                 }
             }
@@ -34,10 +36,12 @@ impl RumdlExtension {
         // Check if rumdl is available in PATH
         if let Some(path) = worktree.which("rumdl") {
             self.cached_binary_path = Some(path.clone());
+            self.use_system_binary = true;
             return Ok(path);
         }
 
         // Download from GitHub releases
+        self.use_system_binary = false;
         zed::set_language_server_installation_status(
             language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
@@ -124,6 +128,7 @@ impl zed::Extension for RumdlExtension {
     fn new() -> Self {
         Self {
             cached_binary_path: None,
+            use_system_binary: false,
         }
     }
 
@@ -137,8 +142,23 @@ impl zed::Extension for RumdlExtension {
         Ok(zed::Command {
             command: binary_path,
             args: vec!["server".to_string()],
-            env: Default::default(),
+            env: if self.use_system_binary {
+                worktree.shell_env()
+            } else {
+                Default::default()
+            },
         })
+    }
+
+    fn language_server_workspace_configuration(
+        &mut self,
+        server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(|lsp_settings| lsp_settings.settings.clone());
+        Ok(settings)
     }
 }
 
@@ -155,6 +175,10 @@ mod tests {
         assert!(
             ext.cached_binary_path.is_none(),
             "A new extension instance should have no cached binary path"
+        );
+        assert!(
+            !ext.use_system_binary,
+            "A new extension instance should not use system binary by default"
         );
     }
 }
