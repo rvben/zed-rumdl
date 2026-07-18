@@ -57,7 +57,8 @@ impl RumdlExtension {
 
         let (platform, arch) = zed::current_platform();
         let asset_name = format!(
-            "rumdl-{arch}-{os}.{ext}",
+            "rumdl-v{version}-{arch}-{os}.{ext}",
+            version = release.version.trim_start_matches('v'),
             arch = match arch {
                 zed::Architecture::Aarch64 => "aarch64",
                 zed::Architecture::X86 => "x86",
