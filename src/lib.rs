@@ -69,18 +69,24 @@ fn version_sort_key(version: &str) -> Vec<u64> {
         .collect()
 }
 
-/// The binary of the newest previously downloaded rumdl among the work-dir
-/// entries, used as a fallback when GitHub cannot be reached to determine or
-/// download the latest release.
-fn newest_downloaded_binary(entries: &[String], os: zed::Os) -> Option<String> {
-    entries
+/// The binaries of previously downloaded rumdl versions among the work-dir
+/// entries, newest first, used as fallback candidates when GitHub cannot be
+/// reached to determine or download the latest release. Every version is a
+/// candidate because an interrupted download can leave the newest directory
+/// without a binary.
+fn downloaded_binaries_newest_first(entries: &[String], os: zed::Os) -> Vec<String> {
+    let mut versions: Vec<(Vec<u64>, &str)> = entries
         .iter()
         .filter_map(|name| {
             let version = name.strip_prefix("rumdl-")?;
             Some((version_sort_key(version), version))
         })
-        .max()
+        .collect();
+    versions.sort_by(|a, b| b.cmp(a));
+    versions
+        .into_iter()
         .map(|(_, version)| binary_relative_path(version, os))
+        .collect()
 }
 
 /// Default arguments used to launch rumdl's language server. rumdl speaks LSP
@@ -167,8 +173,8 @@ fn user_settings(
         .and_then(|lsp_settings| lsp_settings.settings)
 }
 
-/// The newest previously downloaded rumdl binary present in the work dir, if
-/// any still exists on disk.
+/// The newest previously downloaded rumdl binary that still exists on disk in
+/// the work dir, if any.
 fn existing_download() -> Option<String> {
     let entries: Vec<String> = fs::read_dir(".")
         .ok()?
@@ -176,10 +182,9 @@ fn existing_download() -> Option<String> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
     let (platform, _) = zed::current_platform();
-    let path = newest_downloaded_binary(&entries, platform)?;
-    fs::metadata(&path)
-        .is_ok_and(|stat| stat.is_file())
-        .then_some(path)
+    downloaded_binaries_newest_first(&entries, platform)
+        .into_iter()
+        .find(|path| fs::metadata(path).is_ok_and(|stat| stat.is_file()))
 }
 
 struct RumdlExtension {
@@ -441,28 +446,28 @@ mod tests {
     }
 
     #[test]
-    fn offline_fallback_picks_newest_downloaded_version() {
-        // When GitHub is unreachable, a previously downloaded binary must be
-        // reused. Versions compare numerically: 0.2.10 beats 0.2.9.
+    fn offline_fallback_offers_all_downloads_newest_first() {
+        // When GitHub is unreachable, previously downloaded binaries must be
+        // offered newest first, with versions compared numerically (0.2.10
+        // beats 0.2.9). Every version is a candidate, not just the newest: an
+        // interrupted download can leave the newest dir without a binary, and
+        // an older complete download must still be usable.
         let entries = [
             "rumdl-v0.2.9".to_string(),
             "rumdl-v0.2.10".to_string(),
             "some-other-dir".to_string(),
         ];
         assert_eq!(
-            newest_downloaded_binary(&entries, Os::Linux).as_deref(),
-            Some("rumdl-v0.2.10/rumdl")
+            downloaded_binaries_newest_first(&entries, Os::Linux),
+            vec!["rumdl-v0.2.10/rumdl", "rumdl-v0.2.9/rumdl"]
         );
         assert_eq!(
-            newest_downloaded_binary(&entries, Os::Windows).as_deref(),
-            Some("rumdl-v0.2.10/rumdl.exe")
+            downloaded_binaries_newest_first(&entries, Os::Windows),
+            vec!["rumdl-v0.2.10/rumdl.exe", "rumdl-v0.2.9/rumdl.exe"]
         );
-        // No prior download means no fallback.
-        assert_eq!(
-            newest_downloaded_binary(&["other".to_string()], Os::Mac),
-            None
-        );
-        assert_eq!(newest_downloaded_binary(&[], Os::Mac), None);
+        // No prior download means no fallback candidates.
+        assert!(downloaded_binaries_newest_first(&["other".to_string()], Os::Mac).is_empty());
+        assert!(downloaded_binaries_newest_first(&[], Os::Mac).is_empty());
     }
 
     #[test]
