@@ -1,0 +1,29 @@
+name: Publish extension
+
+# Bump the rumdl entry in zed-industries/extensions when a version tag is
+# pushed: updates the submodule pin and the extensions.toml version, pushes to
+# the rvben/extensions fork, and opens the upstream PR. Requires the
+# COMMITTER_TOKEN secret (a PAT with repo and workflow scopes).
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to publish (e.g. v0.0.4)"
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: Bump rumdl in zed-industries/extensions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: huacnlee/zed-extension-action@v1
+        with:
+          extension-name: rumdl
+          push-to: rvben/extensions
+          tag-name: ${{ inputs.tag || github.ref_name }}
+        env:
+          COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}
