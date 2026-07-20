@@ -18,10 +18,16 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Run clippy
-        run: cargo clippy --all-targets -- -D warnings
+      - run: make fmt-check
+      - run: make lint
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: make test
 
   build:
     name: Build WASM
@@ -31,18 +37,4 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-wasip1
-      - name: Build extension
-        run: cargo build --release --target wasm32-wasip1
-      - name: Verify extension.wasm
-        run: |
-          ls -la target/wasm32-wasip1/release/*.wasm
-          file target/wasm32-wasip1/release/*.wasm
-
-  test:
-    name: Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Run tests
-        run: cargo test --verbose
+      - run: make build-wasm
