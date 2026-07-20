@@ -136,7 +136,7 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
    }
    ```
 
-2. **Check if rumdl supports fixing the issue**: Not all lint warnings have auto-fixes. Run `rumdl fix --help` to see supported rules.
+2. **Check if rumdl supports fixing the issue**: Not all lint warnings have auto-fixes. Run `rumdl check --fix` to apply the fixes rumdl can make automatically.
 
 ### Wrong rumdl version
 

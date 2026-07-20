@@ -58,6 +58,24 @@ fn is_stale_version_dir(entry_name: &str, current_version_dir: &str) -> bool {
     entry_name.starts_with("rumdl-") && entry_name != current_version_dir
 }
 
+/// Arguments used to launch rumdl's language server. rumdl speaks LSP over stdio
+/// by default, so no transport flag is passed (there is no `--stdio`).
+fn server_args() -> Vec<String> {
+    vec!["server".to_string()]
+}
+
+/// The user's Zed settings for the rumdl language server (`lsp.rumdl.settings`),
+/// if any. rumdl applies these both as `initialize` options and on
+/// `workspace/didChangeConfiguration`.
+fn user_settings(
+    server_id: &LanguageServerId,
+    worktree: &zed::Worktree,
+) -> Option<zed::serde_json::Value> {
+    LspSettings::for_worktree(server_id.as_ref(), worktree)
+        .ok()
+        .and_then(|lsp_settings| lsp_settings.settings.clone())
+}
+
 struct RumdlExtension {
     cached_binary_path: Option<String>,
     use_system_binary: bool,
@@ -175,7 +193,7 @@ impl zed::Extension for RumdlExtension {
 
         Ok(zed::Command {
             command: binary_path,
-            args: vec!["server".to_string()],
+            args: server_args(),
             env: if self.use_system_binary {
                 worktree.shell_env()
             } else {
@@ -184,15 +202,23 @@ impl zed::Extension for RumdlExtension {
         })
     }
 
+    fn language_server_initialization_options(
+        &mut self,
+        server_id: &LanguageServerId,
+        worktree: &zed::Worktree,
+    ) -> Result<Option<zed::serde_json::Value>> {
+        // rumdl reads its config from `initialize` options and does not pull
+        // `workspace/configuration`, so this is the path that carries user
+        // settings to the server at startup.
+        Ok(user_settings(server_id, worktree))
+    }
+
     fn language_server_workspace_configuration(
         &mut self,
         server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<zed::serde_json::Value>> {
-        let settings = LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .ok()
-            .and_then(|lsp_settings| lsp_settings.settings.clone());
-        Ok(settings)
+        Ok(user_settings(server_id, worktree))
     }
 }
 
@@ -217,6 +243,13 @@ mod tests {
         let ext = RumdlExtension::new();
         assert!(ext.cached_binary_path.is_none());
         assert!(!ext.use_system_binary);
+    }
+
+    #[test]
+    fn server_args_are_stdio_default() {
+        // rumdl serves LSP over stdio by default and has no `--stdio` flag, so
+        // the invocation must be exactly `rumdl server`.
+        assert_eq!(server_args(), vec!["server".to_string()]);
     }
 
     #[test]
