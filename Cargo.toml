@@ -1,10 +1,11 @@
 [package]
 name = "zed-rumdl"
 version = "0.0.3"
-edition = "2021"
+edition = "2024"
 publish = false
 license = "MIT"
 description = "Zed extension for rumdl - a fast Markdown linter and formatter"
+repository = "https://github.com/rvben/zed-rumdl"
 
 [lib]
 crate-type = ["cdylib"]

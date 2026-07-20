@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::fs;
 
-use zed_extension_api::{self as zed, settings::LspSettings, LanguageServerId, Result};
+use zed_extension_api::{self as zed, LanguageServerId, Result, settings::LspSettings};
 
 /// The Rust target triple rumdl uses in its release asset names for this
 /// platform, or `None` if rumdl does not publish a binary for it.
@@ -58,63 +59,163 @@ fn is_stale_version_dir(entry_name: &str, current_version_dir: &str) -> bool {
     entry_name.starts_with("rumdl-") && entry_name != current_version_dir
 }
 
-/// Arguments used to launch rumdl's language server. rumdl speaks LSP over stdio
-/// by default, so no transport flag is passed (there is no `--stdio`).
+/// Numeric sort key for a version like "v0.2.35", so that 0.2.10 orders after
+/// 0.2.9. Non-numeric segments sort as 0.
+fn version_sort_key(version: &str) -> Vec<u64> {
+    version
+        .trim_start_matches('v')
+        .split('.')
+        .map(|segment| segment.parse().unwrap_or(0))
+        .collect()
+}
+
+/// The binary of the newest previously downloaded rumdl among the work-dir
+/// entries, used as a fallback when GitHub cannot be reached to determine or
+/// download the latest release.
+fn newest_downloaded_binary(entries: &[String], os: zed::Os) -> Option<String> {
+    entries
+        .iter()
+        .filter_map(|name| {
+            let version = name.strip_prefix("rumdl-")?;
+            Some((version_sort_key(version), version))
+        })
+        .max()
+        .map(|(_, version)| binary_relative_path(version, os))
+}
+
+/// Default arguments used to launch rumdl's language server. rumdl speaks LSP
+/// over stdio by default (`--stdio` exists only as a hidden compatibility
+/// flag), so the canonical invocation is plain `rumdl server`.
 fn server_args() -> Vec<String> {
     vec!["server".to_string()]
 }
 
+/// How the rumdl binary being launched was located. System binaries (an
+/// explicit settings path or a PATH lookup) inherit the worktree's shell
+/// environment; downloaded binaries run in a clean environment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BinarySource {
+    SettingsPath,
+    PathEnv,
+    Downloaded,
+}
+
+/// The system binary to use, if any: an explicit `lsp.rumdl.binary.path` from
+/// settings wins over `rumdl` on PATH, and an empty configured path is
+/// ignored. `None` means a downloaded release is needed. Settings and PATH are
+/// consulted on every resolution so configuration changes apply without
+/// restarting Zed; only download results are ever cached.
+fn choose_binary(
+    settings_path: Option<String>,
+    path_env: Option<String>,
+) -> Option<(String, BinarySource)> {
+    if let Some(path) = settings_path.filter(|path| !path.is_empty()) {
+        return Some((path, BinarySource::SettingsPath));
+    }
+    path_env.map(|path| (path, BinarySource::PathEnv))
+}
+
+/// The command that launches rumdl: user-configured `binary.arguments` replace
+/// the default `server` invocation, and `binary.env` entries override
+/// same-named shell variables. `shell_env` is a closure so the host call is
+/// only made for system binaries; downloaded binaries run in a clean
+/// environment. Configured entries are appended in sorted order so the
+/// resulting command is deterministic.
+fn build_command(
+    path: String,
+    source: BinarySource,
+    settings_args: Option<Vec<String>>,
+    settings_env: Option<HashMap<String, String>>,
+    shell_env: impl FnOnce() -> Vec<(String, String)>,
+) -> zed::Command {
+    let mut env = match source {
+        BinarySource::Downloaded => Vec::new(),
+        BinarySource::SettingsPath | BinarySource::PathEnv => shell_env(),
+    };
+    if let Some(overrides) = settings_env {
+        let mut overrides: Vec<(String, String)> = overrides.into_iter().collect();
+        overrides.sort();
+        env.retain(|(name, _)| !overrides.iter().any(|(configured, _)| configured == name));
+        env.extend(overrides);
+    }
+
+    zed::Command {
+        command: path,
+        args: settings_args.unwrap_or_else(server_args),
+        env,
+    }
+}
+
+/// The configuration to send in rumdl's `initialize` request: an explicit
+/// `lsp.rumdl.initialization_options` wins; otherwise `lsp.rumdl.settings` is
+/// passed, which rumdl deserializes as its LSP configuration.
+fn initialization_options_from(lsp_settings: LspSettings) -> Option<zed::serde_json::Value> {
+    lsp_settings
+        .initialization_options
+        .or(lsp_settings.settings)
+}
+
 /// The user's Zed settings for the rumdl language server (`lsp.rumdl.settings`),
-/// if any. rumdl applies these both as `initialize` options and on
-/// `workspace/didChangeConfiguration`.
+/// if any, sent as the `workspace/didChangeConfiguration` payload (Zed sends one
+/// right after `initialize` and again whenever the settings change).
 fn user_settings(
     server_id: &LanguageServerId,
     worktree: &zed::Worktree,
 ) -> Option<zed::serde_json::Value> {
     LspSettings::for_worktree(server_id.as_ref(), worktree)
         .ok()
-        .and_then(|lsp_settings| lsp_settings.settings.clone())
+        .and_then(|lsp_settings| lsp_settings.settings)
+}
+
+/// The newest previously downloaded rumdl binary present in the work dir, if
+/// any still exists on disk.
+fn existing_download() -> Option<String> {
+    let entries: Vec<String> = fs::read_dir(".")
+        .ok()?
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    let (platform, _) = zed::current_platform();
+    let path = newest_downloaded_binary(&entries, platform)?;
+    fs::metadata(&path)
+        .is_ok_and(|stat| stat.is_file())
+        .then_some(path)
 }
 
 struct RumdlExtension {
-    cached_binary_path: Option<String>,
-    use_system_binary: bool,
+    /// Relative path of the downloaded binary resolved earlier in this
+    /// session, kept to avoid re-querying GitHub on every server start.
+    cached_download: Option<String>,
 }
 
 impl RumdlExtension {
-    fn language_server_binary_path(
-        &mut self,
-        language_server_id: &LanguageServerId,
-        worktree: &zed::Worktree,
-    ) -> Result<String> {
-        // Cached path that still exists.
-        if let Some(path) = &self.cached_binary_path {
-            if fs::metadata(path).is_ok_and(|stat| stat.is_file()) {
-                return Ok(path.clone());
-            }
+    /// The downloaded rumdl binary to launch: the one resolved earlier this
+    /// session if it still exists, else the latest GitHub release, else (when
+    /// GitHub cannot be reached) the newest previously downloaded version.
+    fn downloaded_binary(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
+        if let Some(path) = &self.cached_download
+            && fs::metadata(path).is_ok_and(|stat| stat.is_file())
+        {
+            return Ok(path.clone());
         }
 
-        // User-configured binary path from LSP settings.
-        let lsp_settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)?;
-        if let Some(binary_settings) = lsp_settings.binary {
-            if let Some(path) = binary_settings.path {
-                if !path.is_empty() {
-                    self.cached_binary_path = Some(path.clone());
-                    self.use_system_binary = true;
-                    return Ok(path);
-                }
-            }
-        }
+        let path = match self.download_latest(language_server_id) {
+            Ok(path) => path,
+            // Offline fallback: prefer a stale rumdl over no language server,
+            // but surface the original error when there is nothing to run.
+            Err(err) => existing_download().ok_or(err)?,
+        };
+        zed::set_language_server_installation_status(
+            language_server_id,
+            &zed::LanguageServerInstallationStatus::None,
+        );
+        self.cached_download = Some(path.clone());
+        Ok(path)
+    }
 
-        // rumdl already on PATH.
-        if let Some(path) = worktree.which("rumdl") {
-            self.cached_binary_path = Some(path.clone());
-            self.use_system_binary = true;
-            return Ok(path);
-        }
-
-        // Otherwise download the matching release binary from GitHub.
-        self.use_system_binary = false;
+    /// Download the latest rumdl release for this platform (a no-op if that
+    /// version is already present) and remove older downloaded versions.
+    fn download_latest(&mut self, language_server_id: &LanguageServerId) -> Result<String> {
         zed::set_language_server_installation_status(
             language_server_id,
             &zed::LanguageServerInstallationStatus::CheckingForUpdate,
@@ -171,7 +272,6 @@ impl RumdlExtension {
             }
         }
 
-        self.cached_binary_path = Some(binary_path.clone());
         Ok(binary_path)
     }
 }
@@ -179,8 +279,7 @@ impl RumdlExtension {
 impl zed::Extension for RumdlExtension {
     fn new() -> Self {
         Self {
-            cached_binary_path: None,
-            use_system_binary: false,
+            cached_download: None,
         }
     }
 
@@ -189,17 +288,27 @@ impl zed::Extension for RumdlExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
-        let binary_path = self.language_server_binary_path(language_server_id, worktree)?;
+        let lsp_settings = LspSettings::for_worktree(language_server_id.as_ref(), worktree)?;
+        let (settings_path, settings_args, settings_env) = match lsp_settings.binary {
+            Some(binary) => (binary.path, binary.arguments, binary.env),
+            None => (None, None, None),
+        };
 
-        Ok(zed::Command {
-            command: binary_path,
-            args: server_args(),
-            env: if self.use_system_binary {
-                worktree.shell_env()
-            } else {
-                Default::default()
-            },
-        })
+        let (path, source) = match choose_binary(settings_path, worktree.which("rumdl")) {
+            Some(system) => system,
+            None => (
+                self.downloaded_binary(language_server_id)?,
+                BinarySource::Downloaded,
+            ),
+        };
+
+        Ok(build_command(
+            path,
+            source,
+            settings_args,
+            settings_env,
+            || worktree.shell_env(),
+        ))
     }
 
     fn language_server_initialization_options(
@@ -210,7 +319,9 @@ impl zed::Extension for RumdlExtension {
         // rumdl reads its config from `initialize` options and does not pull
         // `workspace/configuration`, so this is the path that carries user
         // settings to the server at startup.
-        Ok(user_settings(server_id, worktree))
+        Ok(LspSettings::for_worktree(server_id.as_ref(), worktree)
+            .ok()
+            .and_then(initialization_options_from))
     }
 
     fn language_server_workspace_configuration(
@@ -239,16 +350,166 @@ mod tests {
     ];
 
     #[test]
+    fn settings_binary_path_beats_path_lookup() {
+        // An explicit `lsp.rumdl.binary.path` must win over rumdl on PATH, and
+        // must be honored on every resolution (it is never shadowed by a cache).
+        assert_eq!(
+            choose_binary(
+                Some("/opt/rumdl".to_string()),
+                Some("/usr/bin/rumdl".to_string())
+            ),
+            Some(("/opt/rumdl".to_string(), BinarySource::SettingsPath)),
+        );
+        // An empty configured path is ignored, not launched.
+        assert_eq!(
+            choose_binary(Some(String::new()), Some("/usr/bin/rumdl".to_string())),
+            Some(("/usr/bin/rumdl".to_string(), BinarySource::PathEnv)),
+        );
+        // Nothing configured and nothing on PATH means a download is needed.
+        assert_eq!(choose_binary(None, None), None);
+    }
+
+    #[test]
+    fn user_arguments_replace_default_server_args() {
+        // `lsp.rumdl.binary.arguments` must reach the launched command, e.g. to
+        // pass rumdl's global `--config` flag or `-v`.
+        let command = build_command(
+            "/opt/rumdl".to_string(),
+            BinarySource::SettingsPath,
+            Some(vec![
+                "server".to_string(),
+                "--config".to_string(),
+                "custom.toml".to_string(),
+            ]),
+            None,
+            Vec::new,
+        );
+        assert_eq!(command.command, "/opt/rumdl");
+        assert_eq!(command.args, vec!["server", "--config", "custom.toml"]);
+
+        // Without configured arguments the default `server` invocation is used.
+        let command = build_command(
+            "rumdl-v0.2.35/rumdl".to_string(),
+            BinarySource::Downloaded,
+            None,
+            None,
+            Vec::new,
+        );
+        assert_eq!(command.args, server_args());
+    }
+
+    #[test]
+    fn command_env_combines_shell_env_and_user_overrides() {
+        let shell_env = || {
+            vec![
+                ("PATH".to_string(), "/usr/bin".to_string()),
+                ("RUMDL_LOG".to_string(), "info".to_string()),
+            ]
+        };
+        let user_env = HashMap::from([("RUMDL_LOG".to_string(), "debug".to_string())]);
+
+        // A system binary inherits the shell environment, with user-configured
+        // `binary.env` entries overriding same-named variables.
+        let command = build_command(
+            "/usr/bin/rumdl".to_string(),
+            BinarySource::PathEnv,
+            None,
+            Some(user_env.clone()),
+            shell_env,
+        );
+        assert_eq!(
+            command.env,
+            vec![
+                ("PATH".to_string(), "/usr/bin".to_string()),
+                ("RUMDL_LOG".to_string(), "debug".to_string()),
+            ]
+        );
+
+        // A downloaded binary runs clean: no shell environment, but explicit
+        // user-configured variables still apply.
+        let command = build_command(
+            "rumdl-v0.2.35/rumdl".to_string(),
+            BinarySource::Downloaded,
+            None,
+            Some(user_env),
+            || panic!("shell env must not be fetched for downloaded binaries"),
+        );
+        assert_eq!(
+            command.env,
+            vec![("RUMDL_LOG".to_string(), "debug".to_string())]
+        );
+    }
+
+    #[test]
+    fn offline_fallback_picks_newest_downloaded_version() {
+        // When GitHub is unreachable, a previously downloaded binary must be
+        // reused. Versions compare numerically: 0.2.10 beats 0.2.9.
+        let entries = [
+            "rumdl-v0.2.9".to_string(),
+            "rumdl-v0.2.10".to_string(),
+            "some-other-dir".to_string(),
+        ];
+        assert_eq!(
+            newest_downloaded_binary(&entries, Os::Linux).as_deref(),
+            Some("rumdl-v0.2.10/rumdl")
+        );
+        assert_eq!(
+            newest_downloaded_binary(&entries, Os::Windows).as_deref(),
+            Some("rumdl-v0.2.10/rumdl.exe")
+        );
+        // No prior download means no fallback.
+        assert_eq!(
+            newest_downloaded_binary(&["other".to_string()], Os::Mac),
+            None
+        );
+        assert_eq!(newest_downloaded_binary(&[], Os::Mac), None);
+    }
+
+    #[test]
+    fn explicit_initialization_options_win_over_settings() {
+        use zed::serde_json::json;
+        use zed_extension_api::settings::LspSettings;
+
+        let explicit = LspSettings {
+            binary: None,
+            initialization_options: Some(json!({"enableAutoFix": true})),
+            settings: Some(json!({"settings": {"lineLength": 120}})),
+        };
+        assert_eq!(
+            initialization_options_from(explicit),
+            Some(json!({"enableAutoFix": true}))
+        );
+
+        // Without an explicit `initialization_options` key, `settings` carries
+        // the configuration to rumdl's `initialize` request.
+        let settings_only = LspSettings {
+            binary: None,
+            initialization_options: None,
+            settings: Some(json!({"settings": {"lineLength": 120}})),
+        };
+        assert_eq!(
+            initialization_options_from(settings_only),
+            Some(json!({"settings": {"lineLength": 120}}))
+        );
+
+        let empty = LspSettings {
+            binary: None,
+            initialization_options: None,
+            settings: None,
+        };
+        assert_eq!(initialization_options_from(empty), None);
+    }
+
+    #[test]
     fn new_extension_has_default_state() {
         let ext = RumdlExtension::new();
-        assert!(ext.cached_binary_path.is_none());
-        assert!(!ext.use_system_binary);
+        assert!(ext.cached_download.is_none());
     }
 
     #[test]
     fn server_args_are_stdio_default() {
-        // rumdl serves LSP over stdio by default and has no `--stdio` flag, so
-        // the invocation must be exactly `rumdl server`.
+        // rumdl serves LSP over stdio by default, so the default invocation is
+        // exactly `rumdl server` with no transport flag.
         assert_eq!(server_args(), vec!["server".to_string()]);
     }
 
