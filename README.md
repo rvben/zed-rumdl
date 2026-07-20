@@ -23,14 +23,34 @@ The extension will automatically download the appropriate rumdl binary for your 
 
 ### Zed Settings
 
-Add rumdl as a language server for Markdown files in your Zed settings (`.zed/settings.json` or global settings):
+rumdl starts automatically for Markdown files once the extension is installed.
+To format with rumdl, set it as the formatter explicitly. Zed's default
+(`"formatter": "auto"`) formats Markdown with its built-in Prettier
+integration, so without this setting Prettier formats your files, not rumdl:
 
 ```json
 {
   "languages": {
     "Markdown": {
-      "language_servers": ["rumdl"],
+      "formatter": {
+        "language_server": {
+          "name": "rumdl"
+        }
+      },
       "format_on_save": "on"
+    }
+  }
+}
+```
+
+If you set `language_servers` explicitly, keep the `"..."` placeholder so
+other language servers stay enabled alongside rumdl:
+
+```json
+{
+  "languages": {
+    "Markdown": {
+      "language_servers": ["rumdl", "..."]
     }
   }
 }
@@ -38,35 +58,63 @@ Add rumdl as a language server for Markdown files in your Zed settings (`.zed/se
 
 ### Custom Binary Path
 
-If you want to use a specific rumdl binary instead of the auto-downloaded one:
+If you want to use a specific rumdl binary instead of the auto-downloaded one,
+you can also pass custom arguments (for example rumdl's global `--config` flag)
+and environment variables:
 
 ```json
 {
   "lsp": {
     "rumdl": {
       "binary": {
-        "path": "/path/to/rumdl"
+        "path": "/path/to/rumdl",
+        "arguments": ["server", "--config", "/path/to/.rumdl.toml"],
+        "env": {
+          "RUMDL_LOG": "debug"
+        }
       }
     }
   }
 }
 ```
 
+Only `path` is required; `arguments` defaults to `["server"]`, and `env`
+entries are added to the server's environment. A configured `path` takes
+precedence over rumdl on your PATH, which in turn takes precedence over the
+auto-downloaded binary. Changes apply on the next language server restart, no
+Zed restart needed.
+
 ### LSP Settings
 
-You can pass configuration to rumdl via Zed's LSP settings:
+You can pass configuration to rumdl via Zed's LSP settings. The shape matches
+rumdl's LSP configuration: server options at the top level (camelCase), rule
+configuration nested under `settings`:
 
 ```json
 {
   "lsp": {
     "rumdl": {
       "settings": {
-        "line-length": 120
+        "configPath": ".rumdl.toml",
+        "enableAutoFix": true,
+        "settings": {
+          "lineLength": 120,
+          "disable": ["MD033"],
+          "MD013": {
+            "lineLength": 120
+          }
+        }
       }
     }
   }
 }
 ```
+
+These are sent to rumdl both as `initialize` options and on
+`workspace/didChangeConfiguration`, so edits apply without restarting the
+server. To send a different payload at initialization, set
+`lsp.rumdl.initialization_options`, which takes precedence over `settings`
+for the `initialize` request.
 
 ### Using a System-Installed rumdl
 
@@ -104,20 +152,11 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
    rumdl --version
    ```
 
-3. **Restart Zed**: After installing or upgrading rumdl, restart Zed to pick up the new binary.
+3. **Restart the language server**: After installing or upgrading rumdl, run `editor: restart language server` from the command palette (or restart Zed) to pick up the new binary.
 
 ### Diagnostics not showing
 
-1. **Check language server is enabled**: Ensure your settings include:
-   ```json
-   {
-     "languages": {
-       "Markdown": {
-         "language_servers": ["rumdl"]
-       }
-     }
-   }
-   ```
+1. **Check language server is enabled**: rumdl is enabled by default for Markdown. If you override `language_servers` in your settings, make sure the list includes `"rumdl"`.
 
 2. **Check file type**: Ensure the file is recognized as Markdown (check the language indicator in the status bar).
 
@@ -125,16 +164,22 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
 
 ### Format on save not working
 
-1. **Enable format on save** in your settings:
+1. **Set rumdl as the formatter and enable format on save**:
    ```json
    {
      "languages": {
        "Markdown": {
+         "formatter": {
+           "language_server": {
+             "name": "rumdl"
+           }
+         },
          "format_on_save": "on"
        }
      }
    }
    ```
+   Without the `formatter` setting, Zed formats Markdown with its built-in Prettier integration instead of rumdl.
 
 2. **Check if rumdl supports fixing the issue**: Not all lint warnings have auto-fixes. Run `rumdl check --fix` to apply the fixes rumdl can make automatically.
 
@@ -150,10 +195,12 @@ To use a specific version, either:
 - Ensure your preferred version is first in PATH
 - Remove any cached downloads (in Zed's extension data directory)
 
+Settings and PATH are re-checked every time the language server starts, so switching binaries only needs `editor: restart language server`, not a Zed restart. If GitHub is unreachable, the extension falls back to the most recently downloaded binary.
+
 ## Requirements
 
 - Zed editor
-- macOS (Intel or Apple Silicon), Linux (x86_64 or ARM64), or Windows
+- macOS (Intel or Apple Silicon), Linux (x86_64 or ARM64), or Windows (x86_64)
 
 ## Contributing
 
