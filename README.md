@@ -78,11 +78,13 @@ and environment variables:
 }
 ```
 
-Only `path` is required; `arguments` defaults to `["server"]`, and `env`
-entries are added to the server's environment. A configured `path` takes
-precedence over rumdl on your PATH, which in turn takes precedence over the
-auto-downloaded binary. Changes apply on the next language server restart, no
-Zed restart needed.
+When setting a custom `path`, always include `"arguments": ["server"]`: Zed
+launches a settings-configured binary with exactly the arguments given and
+does not add the `server` subcommand itself, so without them rumdl starts in
+CLI mode and the language server fails. `env` entries are added to the
+server's environment. A configured `path` takes precedence over rumdl on your
+PATH, which in turn takes precedence over the auto-downloaded binary. Changes
+apply on the next language server restart, no Zed restart needed.
 
 ### LSP Settings
 
