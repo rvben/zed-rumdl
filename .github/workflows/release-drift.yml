@@ -17,6 +17,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.100.0
       - run: make check-assets
         env:
           GH_TOKEN: ${{ github.token }}
