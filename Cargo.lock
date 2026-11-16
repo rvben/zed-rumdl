@@ -832,7 +832,7 @@ dependencies = [
 
 [[package]]
 name = "zed-rumdl"
-version = "0.0.5"
+version = "0.1.0"
 dependencies = [
  "tempfile",
  "zed_extension_api",
