@@ -15,15 +15,38 @@ on:
         required: true
         type: string
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  publish:
-    name: Bump rumdl in zed-industries/extensions
+  check-tag:
+    name: Tag matches extension version
     runs-on: ubuntu-latest
     steps:
-      - uses: huacnlee/zed-extension-action@v1
+      - uses: actions/checkout@v6
+        with:
+          ref: refs/tags/${{ env.TAG }}
+      - run: make check-tag TAG="$TAG"
+
+  # A manual run executes this gate on the ref it was dispatched from, so
+  # dispatch it from the tag being published.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    name: Bump rumdl in zed-industries/extensions
+    needs: [check-tag, ci]
+    runs-on: ubuntu-latest
+    steps:
+      # Pinned to a commit because this step holds COMMITTER_TOKEN and only
+      # runs at release time, where no CI run can vet a moved ref. `v1` is a
+      # branch upstream; this is its head, the code that published 0.0.5.
+      # Moving to v2 renames the `tag-name` input to `tag`.
+      - uses: huacnlee/zed-extension-action@11b0e4805c1f4382a4bb3b1a9b17be328e1559c3 # v1
         with:
           extension-name: rumdl
           push-to: rvben/extensions
-          tag-name: ${{ inputs.tag || github.ref_name }}
+          tag-name: ${{ env.TAG }}
         env:
           COMMITTER_TOKEN: ${{ secrets.COMMITTER_TOKEN }}

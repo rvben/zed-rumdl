@@ -1,4 +1,4 @@
-.PHONY: all toolchain fmt-check lint test build-wasm check-assets
+.PHONY: all toolchain fmt-check lint test build-wasm check-assets check-tag
 
 # The target Zed compiles Rust extensions for.
 WASM_TARGET := wasm32-wasip2
@@ -30,3 +30,12 @@ build-wasm:
 # Runs weekly in CI (release-drift workflow) and on demand locally.
 check-assets:
 	cargo test -- --ignored computed_asset_names_exist_in_latest_release
+
+# Release gate: TAG (e.g. v0.0.5) must name the version in extension.toml, so
+# the registry never receives a tag whose source declares a different version.
+check-tag:
+	@test -n "$(TAG)" || { echo "usage: make check-tag TAG=vX.Y.Z" >&2; exit 2; }
+	@version=$$(sed -n 's/^version = "\(.*\)"$$/\1/p' extension.toml); \
+	test -n "$$version" || { echo "extension.toml declares no version" >&2; exit 1; }; \
+	test "$(TAG)" = "v$$version" || { echo "tag $(TAG) does not match extension.toml version $$version (expected v$$version)" >&2; exit 1; }; \
+	echo "tag $(TAG) matches extension.toml version $$version"
