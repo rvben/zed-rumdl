@@ -204,6 +204,9 @@ Settings and PATH are re-checked every time the language server starts, so switc
 - Zed editor
 - macOS (Intel or Apple Silicon), Linux (x86_64 or ARM64), or Windows (x86_64)
 
+On Linux the extension downloads rumdl's statically linked build, which runs on
+any distribution, including musl-based ones such as Alpine.
+
 ## Contributing
 
 Contributions are welcome! Please see the [issue templates](.github/ISSUE_TEMPLATE) for reporting bugs or requesting features.

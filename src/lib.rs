@@ -4,13 +4,16 @@ use std::fs;
 use zed_extension_api::{self as zed, LanguageServerId, Result, settings::LspSettings};
 
 /// The Rust target triple rumdl uses in its release asset names for this
-/// platform, or `None` if rumdl does not publish a binary for it.
+/// platform, or `None` if rumdl does not publish a binary for it. Linux uses
+/// the statically linked musl builds, which run on every distribution; the
+/// glibc builds fail to start on musl systems and on older glibc versions, and
+/// an extension cannot tell which libc its host has.
 fn target_triple(os: zed::Os, arch: zed::Architecture) -> Option<&'static str> {
     Some(match (os, arch) {
         (zed::Os::Mac, zed::Architecture::Aarch64) => "aarch64-apple-darwin",
         (zed::Os::Mac, zed::Architecture::X8664) => "x86_64-apple-darwin",
-        (zed::Os::Linux, zed::Architecture::Aarch64) => "aarch64-unknown-linux-gnu",
-        (zed::Os::Linux, zed::Architecture::X8664) => "x86_64-unknown-linux-gnu",
+        (zed::Os::Linux, zed::Architecture::Aarch64) => "aarch64-unknown-linux-musl",
+        (zed::Os::Linux, zed::Architecture::X8664) => "x86_64-unknown-linux-musl",
         (zed::Os::Windows, zed::Architecture::X8664) => "x86_64-pc-windows-msvc",
         _ => return None,
     })
@@ -536,12 +539,12 @@ mod tests {
             (
                 Os::Linux,
                 Architecture::Aarch64,
-                "rumdl-v0.2.35-aarch64-unknown-linux-gnu.tar.gz",
+                "rumdl-v0.2.35-aarch64-unknown-linux-musl.tar.gz",
             ),
             (
                 Os::Linux,
                 Architecture::X8664,
-                "rumdl-v0.2.35-x86_64-unknown-linux-gnu.tar.gz",
+                "rumdl-v0.2.35-x86_64-unknown-linux-musl.tar.gz",
             ),
             (
                 Os::Windows,
