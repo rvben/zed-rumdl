@@ -164,18 +164,6 @@ fn initialization_options_from(lsp_settings: LspSettings) -> Option<zed::serde_j
         .or(lsp_settings.settings)
 }
 
-/// The user's Zed settings for the rumdl language server (`lsp.rumdl.settings`),
-/// if any, sent as the `workspace/didChangeConfiguration` payload (Zed sends one
-/// right after `initialize` and again whenever the settings change).
-fn user_settings(
-    server_id: &LanguageServerId,
-    worktree: &zed::Worktree,
-) -> Option<zed::serde_json::Value> {
-    LspSettings::for_worktree(server_id.as_ref(), worktree)
-        .ok()
-        .and_then(|lsp_settings| lsp_settings.settings)
-}
-
 /// The newest previously downloaded rumdl binary that still exists on disk in
 /// the work dir, if any.
 fn existing_download() -> Option<String> {
@@ -327,9 +315,8 @@ impl zed::Extension for RumdlExtension {
         // rumdl reads its config from `initialize` options and does not pull
         // `workspace/configuration`, so this is the path that carries user
         // settings to the server at startup.
-        Ok(LspSettings::for_worktree(server_id.as_ref(), worktree)
-            .ok()
-            .and_then(initialization_options_from))
+        let lsp_settings = LspSettings::for_worktree(server_id.as_ref(), worktree)?;
+        Ok(initialization_options_from(lsp_settings))
     }
 
     fn language_server_workspace_configuration(
@@ -337,7 +324,10 @@ impl zed::Extension for RumdlExtension {
         server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<Option<zed::serde_json::Value>> {
-        Ok(user_settings(server_id, worktree))
+        // `lsp.rumdl.settings` is the `workspace/didChangeConfiguration`
+        // payload: Zed sends one right after `initialize` and again whenever
+        // the settings change.
+        Ok(LspSettings::for_worktree(server_id.as_ref(), worktree)?.settings)
     }
 }
 
