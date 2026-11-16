@@ -7,7 +7,8 @@
 - Real-time Markdown linting with inline diagnostics
 - Format on save and on-demand formatting
 - Automatic binary management (downloads rumdl automatically)
-- Respects project configuration (`.rumdl.toml`, `pyproject.toml`)
+- Respects project configuration (`.rumdl.toml`, `pyproject.toml`,
+  markdownlint files)
 - Configurable via Zed's LSP settings
 
 ## Installation
@@ -135,12 +136,14 @@ mise use rumdl@latest
 
 ### Project Configuration
 
-rumdl reads configuration from:
+rumdl discovers its configuration in your project:
 
-- `.rumdl.toml` in your project root
+- `.rumdl.toml`, `rumdl.toml`, or `.config/rumdl.toml`
 - `pyproject.toml` under `[tool.rumdl]`
+- markdownlint configuration files such as `.markdownlint.json` or
+  `.markdownlint.yaml`, when no rumdl configuration exists
 
-See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONFIGURATION.md) for all configuration options.
+See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/configuration/index.md) for the full list, the discovery order, and all configuration options.
 
 ## Troubleshooting
 
@@ -149,6 +152,7 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
 1. **Check logs**: Open the command palette and run `zed: open log`. Look for lines containing "rumdl".
 
 2. **Verify rumdl is installed**: If using a system installation, verify with:
+
    ```bash
    which rumdl
    rumdl --version
@@ -167,6 +171,7 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
 ### Format on save not working
 
 1. **Set rumdl as the formatter and enable format on save**:
+
    ```json
    {
      "languages": {
@@ -181,6 +186,7 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
      }
    }
    ```
+
    Without the `formatter` setting, Zed formats Markdown with its built-in Prettier integration instead of rumdl.
 
 2. **Check if rumdl supports fixing the issue**: Not all lint warnings have auto-fixes. Run `rumdl check --fix` to apply the fixes rumdl can make automatically.
@@ -188,11 +194,13 @@ See the [rumdl documentation](https://github.com/rvben/rumdl/blob/main/docs/CONF
 ### Wrong rumdl version
 
 The extension checks for rumdl in this order:
+
 1. Custom binary path from LSP settings
 2. System PATH (`which rumdl`)
 3. Auto-downloaded from GitHub releases
 
 To use a specific version, either:
+
 - Set a custom binary path in LSP settings
 - Ensure your preferred version is first in PATH
 - Remove any cached downloads (in Zed's extension data directory)
