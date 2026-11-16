@@ -14,11 +14,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.100.0
-          components: rustfmt, clippy
+      - uses: actions/checkout@v6
+      - run: make toolchain
       - uses: Swatinem/rust-cache@v2
       - run: make fmt-check
       - run: make lint
@@ -27,10 +24,8 @@ jobs:
     name: Test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.100.0
+      - uses: actions/checkout@v6
+      - run: make toolchain
       - uses: Swatinem/rust-cache@v2
       - run: make test
 
@@ -38,10 +33,7 @@ jobs:
     name: Build WASM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.100.0
-          targets: wasm32-wasip1
+      - uses: actions/checkout@v6
+      - run: make toolchain
       - uses: Swatinem/rust-cache@v2
       - run: make build-wasm
